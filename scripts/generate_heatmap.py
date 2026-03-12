@@ -11,17 +11,20 @@ Style features:
 """
 
 import os
+import sys
+
+# Ensure local imports + matplotlib cache are writable (important in sandbox/WSL)
+current_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.abspath(os.path.join(current_dir, ".."))
+sys.path.append(project_root)
+os.environ.setdefault("MPLCONFIGDIR", os.path.join(project_root, ".mplconfig"))
+
 import pandas as pd
 import matplotlib.pyplot as plt
+
 from src.visualization import create_styled_heatmap_pipeline
 
 def main():
-    # Setup paths
-    import sys
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    project_root = os.path.abspath(os.path.join(current_dir, '..'))
-    sys.path.append(project_root)
-    
     data_path = os.path.join(project_root, 'data', 'cleaned_data.csv')
     output_path = os.path.join(project_root, 'outputs', 'heatmap_y1_rg.png')
     
@@ -54,11 +57,17 @@ def main():
     model, fig, ax = create_styled_heatmap_pipeline(
         df,
         target_col='y1',
-        x1_range=(1, 100),
-        x2_range=(1, 100),
+        x1_range=(0, 100),
+        x2_range=(0, 100),
         resolution=100,
         save_path=output_path,
-        show_data_points=False  # 不显示原始数据点，只显示纯净热力图
+        show_data_points=False,  # 不显示原始数据点，只显示纯净热力图
+        colorbar_label='Rg (Å)',
+        font_scale=2.0,
+        bold=False,
+        tick_step=20,
+        colorbar_integer_ticks=True,
+        colorbar_tick_format="%.0f",
     )
     
     # Display results summary

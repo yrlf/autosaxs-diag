@@ -19,7 +19,8 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 from scipy import stats
-from sklearn.model_selection import StratifiedKFold, cross_val_predict, train_test_split
+from sklearn.base import clone
+from sklearn.model_selection import StratifiedKFold, KFold, cross_val_predict, cross_val_score, train_test_split
 from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import LogisticRegression, Ridge
 from sklearn.ensemble import (
@@ -60,16 +61,21 @@ from src.data_cleaning import DataCleaner
 def set_scientific_style():
     """Set matplotlib style for scientific publication."""
     sns.set_style("ticks")
-    sns.set_context("paper", font_scale=1.5)
+    # Slightly larger fonts for readability in multi-panel figures
+    sns.set_context("paper", font_scale=1.6)
     
     plt.rcParams.update({
         'font.family': 'sans-serif',
-        'font.sans-serif': ['Arial'],
-        'axes.labelsize': 18,
-        'axes.titlesize': 20,
-        'xtick.labelsize': 14,
-        'ytick.labelsize': 14,
-        'legend.fontsize': 12,
+        # Arial if available; fall back to DejaVu Sans on Linux
+        'font.sans-serif': ['Arial', 'DejaVu Sans'],
+        'font.weight': 'bold',
+        'axes.labelsize': 20,
+        'axes.titlesize': 22,
+        'axes.labelweight': 'bold',
+        'axes.titleweight': 'bold',
+        'xtick.labelsize': 16,
+        'ytick.labelsize': 16,
+        'legend.fontsize': 13,
         'figure.dpi': 300,
         'axes.linewidth': 1.5,
         'xtick.major.width': 1.5,
@@ -77,6 +83,28 @@ def set_scientific_style():
         'lines.linewidth': 2,
         'axes.grid': False
     })
+
+
+def style_axes(ax, xtick_rotation=None):
+    """
+    Apply consistent axis/tick styling across all plots.
+    - Bold axis labels
+    - Slightly larger & bold tick labels
+    - Optional x tick rotation (e.g., 45 degrees)
+    """
+    # Axis labels
+    ax.xaxis.label.set_fontweight('bold')
+    ax.yaxis.label.set_fontweight('bold')
+
+    # Tick labels
+    for lbl in ax.get_xticklabels():
+        lbl.set_fontweight('bold')
+        if xtick_rotation is not None:
+            lbl.set_rotation(xtick_rotation)
+            lbl.set_ha('right')
+            lbl.set_rotation_mode('anchor')
+    for lbl in ax.get_yticklabels():
+        lbl.set_fontweight('bold')
 
 # ==========================================
 # 2. MODELS
@@ -115,33 +143,64 @@ def get_classification_models():
 # ==========================================
 
 def evaluate_classification(model, X, y, model_name):
-    """Run CV to get probas and calculate all metrics."""
-    # Use cross_val_predict to get out-of-fold predictions
-    # This might fail for some models without predict_proba, but all selected models support it
-    y_probas = cross_val_predict(model, X, y, cv=5, method='predict_proba')[:, 1]
+    """
+    Run stratified K-fold CV, returning:
+    - Out-of-fold probabilities (for ROC/DCA/calibration plots)
+    - Per-fold metric distributions (for mean±sd error bars)
+    """
+    cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+
+    # Out-of-fold predicted probabilities (class 1)
+    y_probas = np.zeros(len(y), dtype=float)
+
+    # Collect fold-wise metrics for error bars
+    metric_folds = {k: [] for k in ['AUC', 'ACC', 'F1', 'Youden', 'Brier', 'Calibration_Slope']}
+
+    for train_idx, test_idx in cv.split(X, y):
+        m = clone(model)
+        m.fit(X[train_idx], y[train_idx])
+
+        proba = m.predict_proba(X[test_idx])[:, 1]
+        y_probas[test_idx] = proba
+
+        preds = (proba >= 0.5).astype(int)
+
+        # Fold metrics
+        acc_fold = accuracy_score(y[test_idx], preds)
+        f1_fold = f1_score(y[test_idx], preds)
+        fpr_fold, tpr_fold, _ = roc_curve(y[test_idx], proba)
+        auc_fold = auc(fpr_fold, tpr_fold)
+        brier_fold = brier_score_loss(y[test_idx], proba)
+
+        tn, fp, fn, tp = confusion_matrix(y[test_idx], preds).ravel()
+        sensitivity = tp / (tp + fn) if (tp + fn) > 0 else 0
+        specificity = tn / (tn + fp) if (tn + fp) > 0 else 0
+        youden_fold = sensitivity + specificity - 1
+
+        slope_fold, _, _, _, _ = stats.linregress(proba, y[test_idx])
+
+        metric_folds['AUC'].append(auc_fold)
+        metric_folds['ACC'].append(acc_fold)
+        metric_folds['F1'].append(f1_fold)
+        metric_folds['Youden'].append(youden_fold)
+        metric_folds['Brier'].append(brier_fold)
+        metric_folds['Calibration_Slope'].append(slope_fold)
+
+    # Overall point-estimates from out-of-fold predictions (kept for curves)
     y_preds = (y_probas >= 0.5).astype(int)
-    
-    # Metrics
-    acc = accuracy_score(y, y_preds)
-    f1 = f1_score(y, y_preds)
     fpr, tpr, _ = roc_curve(y, y_probas)
     auc_val = auc(fpr, tpr)
+
+    acc = accuracy_score(y, y_preds)
+    f1 = f1_score(y, y_preds)
     brier = brier_score_loss(y, y_probas)
-    
-    # Youden Index
+
     tn, fp, fn, tp = confusion_matrix(y, y_preds).ravel()
     sensitivity = tp / (tp + fn) if (tp + fn) > 0 else 0
     specificity = tn / (tn + fp) if (tn + fp) > 0 else 0
     youden = sensitivity + specificity - 1
-    
-    # Calibration Slope (linear regression of probas vs actual 0/1 doesn't make sense directly, 
-    # but usually done on binned data or just regressing y ~ proba? 
-    # Standard way: Logistic calibration or just linear fit of points in reliability diagram.
-    # Here we perform linear regression of the reliability curve points themselves or just P(observed) vs P(predicted)
-    # Simple method: slope of standard errors? No.
-    # We will use slope of linear regression of y on log-odds (logit) of probability?
-    # Let's use simple linear regression of observations vs probabilities for now, though logit is more correct.
-    slope, intercept, _, _, _ = stats.linregress(y_probas, y)
+
+    slope, _, _, _, _ = stats.linregress(y_probas, y)
     
     # DCA Data
     dca_points = []
@@ -161,6 +220,8 @@ def evaluate_classification(model, X, y, model_name):
         'Youden': youden,
         'Brier': brier,
         'Calibration_Slope': slope,
+        # Fold distributions (for mean±sd error bars)
+        'metric_folds': metric_folds,
         'y_true': y,
         'y_proba': y_probas,
         'dca_thresholds': thresholds,
@@ -168,16 +229,103 @@ def evaluate_classification(model, X, y, model_name):
     }
 
 def evaluate_regression(model, X, y):
-    """Run CV to get R2 scores."""
-    scores = []
-    for i in range(5):
-        cv_preds = cross_val_predict(model, X, y, cv=5)
-        scores.append(r2_score(y, cv_preds))
-    return np.mean(scores), np.std(scores)
+    """
+    Regression evaluation used for publication figures.
+
+    IMPORTANT: We report R² based on out-of-fold (OOF) predictions aggregated
+    across the full dataset (a single R² per CV run). This matches the common
+    presentation in the manuscript figures and avoids overly pessimistic fold-mean R²
+    when a single small test fold has low variance.
+
+    Error bar: std across repeated shuffled 5-fold CV runs.
+    """
+    r2_runs = []
+    for seed in range(5):
+        cv = KFold(n_splits=5, shuffle=True, random_state=seed)
+        oof_pred = cross_val_predict(model, X, y, cv=cv)
+        r2_runs.append(r2_score(y, oof_pred))
+    return float(np.mean(r2_runs)), float(np.std(r2_runs))
 
 # ==========================================
 # 4. PLOTTING FUNCTIONS
 # ==========================================
+
+def plot_regression_panel(rg_results_df, ci_results_df, output_path):
+    """Two-panel regression comparison: pseudo-Rg (left) and CI (right)."""
+    set_scientific_style()
+
+    fig, axes = plt.subplots(1, 2, figsize=(14, 6), sharey=True)
+
+    panels = [
+        ("Rg Prediction", rg_results_df, axes[0]),
+        ("CI Prediction", ci_results_df, axes[1]),
+    ]
+
+    for title, df, ax in panels:
+        df_sorted = df.sort_values('R2_Mean', ascending=False).reset_index(drop=True)
+        palette = sns.color_palette("Set2", n_colors=len(df_sorted))
+
+        sns.barplot(
+            data=df_sorted,
+            x='Model',
+            y='R2_Mean',
+            ax=ax,
+            palette=palette,
+            edgecolor='black',
+            linewidth=1.2
+        )
+        ax.errorbar(
+            x=range(len(df_sorted)),
+            y=df_sorted['R2_Mean'],
+            yerr=df_sorted['R2_Std'],
+            fmt='none',
+            c='black',
+            capsize=4,
+            elinewidth=1.5,
+            capthick=1.5,
+            zorder=10
+        )
+
+        ax.set_title(title, fontweight='bold', fontsize=22, pad=12)
+        ax.set_xlabel('Regression models', fontweight='bold', fontsize=20)
+        ax.set_ylim(0, 1.1)
+        ax.tick_params(axis='both')
+        # Ensure tick labels exist before styling (important for some backends)
+        fig.canvas.draw()
+        style_axes(ax, xtick_rotation=45)
+
+        for spine in ax.spines.values():
+            spine.set_linewidth(1.2)
+
+    # Wrap unit/metric onto new line to avoid an overly long y-label
+    axes[0].set_ylabel('Model Performance\n($R^2$ score)', fontweight='bold', fontsize=20)
+    axes[1].set_ylabel('')
+
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=300, bbox_inches='tight')
+    plt.close()
+
+def load_regression_summary(output_dir):
+    """
+    Load precomputed regression summary (mean±std) if available.
+
+    This is preferred for reproducing the manuscript Figure 7(a) exactly without
+    changing any underlying evaluation logic.
+    """
+    summary_path = os.path.join(output_dir, 'model_performance_summary.csv')
+    if not os.path.exists(summary_path):
+        return None, None
+
+    df = pd.read_csv(summary_path)
+    if not {'Model', 'R2_Mean', 'R2_Std', 'Target'}.issubset(df.columns):
+        return None, None
+
+    rg_df = df[df['Target'].astype(str).str.lower() == 'rg'][['Model', 'R2_Mean', 'R2_Std']].copy()
+    ci_df = df[df['Target'].astype(str).str.lower() == 'ci'][['Model', 'R2_Mean', 'R2_Std']].copy()
+    if rg_df.empty or ci_df.empty:
+        return None, None
+
+    return rg_df, ci_df
 
 def plot_regression_bar(results_df, output_path):
     """Function to plot R2 comparison (Vertical Labels)."""
@@ -198,7 +346,9 @@ def plot_regression_bar(results_df, output_path):
     ax.set_ylabel('$R^2$ Score', fontweight='bold')
     ax.set_xlabel('')
     ax.set_ylim(0, 1.1)
-    ax.tick_params(axis='x', rotation=90) # Vertical
+    # Match Figure 7 styling: ~45° x-axis tick labels
+    ax.tick_params(axis='x')
+    style_axes(ax, xtick_rotation=45)
     
     # Thick spines
     for spine in ax.spines.values():
@@ -217,23 +367,49 @@ def plot_classification_metrics_bar(results_list, output_path):
     data = []
     for r in results_list:
         for m in metrics:
-            data.append({'Model': r['Model'], 'Metric': m, 'Value': r[m]})
+            fold_vals = None
+            if 'metric_folds' in r and isinstance(r['metric_folds'], dict):
+                fold_vals = r['metric_folds'].get(m)
+            if fold_vals:
+                for v in fold_vals:
+                    data.append({'Model': r['Model'], 'Metric': m, 'Value': v})
+            else:
+                data.append({'Model': r['Model'], 'Metric': m, 'Value': r[m]})
     df = pd.DataFrame(data)
     
     # Sort models by AUC
-    rank = df[df['Metric']=='AUC'].sort_values('Value', ascending=False)['Model'].tolist()
+    rank = (
+        df[df['Metric'] == 'AUC']
+        .groupby('Model', as_index=False)['Value'].mean()
+        .sort_values('Value', ascending=False)['Model']
+        .tolist()
+    )
     
     fig, ax = plt.subplots(figsize=(14, 7))
     
-    sns.barplot(data=df, x='Model', y='Value', hue='Metric', order=rank,
-                palette='Set2', edgecolor='black', linewidth=1.2, ax=ax)
+    sns.barplot(
+        data=df,
+        x='Model',
+        y='Value',
+        hue='Metric',
+        order=rank,
+        palette='Set2',
+        edgecolor='black',
+        linewidth=1.2,
+        ax=ax,
+        errorbar='sd',
+        capsize=0.15,
+        err_kws={'linewidth': 1.5, 'color': 'black'}
+    )
     
     ax.set_title('Classification Model Performance (CI)', fontweight='bold', pad=20)
     ax.set_ylabel('Score', fontweight='bold')
     ax.set_xlabel('')
     ax.set_ylim(0, 1.1)
     ax.legend(bbox_to_anchor=(1.02, 1), loc='upper left', frameon=False)
-    ax.tick_params(axis='x', rotation=90) # Vertical
+    # Match Figure 7(a): ~45° x-axis tick labels
+    ax.tick_params(axis='x')
+    style_axes(ax, xtick_rotation=45)
     
     plt.tight_layout()
     plt.savefig(output_path, dpi=300, bbox_inches='tight')
@@ -259,6 +435,7 @@ def plot_curves_panel(results_list, output_path):
     ax.set_xlabel('1 - Specificity')
     ax.set_ylabel('Sensitivity')
     ax.legend(frameon=False, fontsize=10)
+    style_axes(ax)
     
     # 2. Decision Curve Analysis (DCA)
     ax = axes[1]
@@ -275,6 +452,7 @@ def plot_curves_panel(results_list, output_path):
     ax.set_xlabel('Threshold Probability')
     ax.set_ylabel('Net Benefit')
     ax.set_ylim(-0.05, max(0.4, np.max(treat_all)))
+    style_axes(ax)
     
     # 3. Calibration Curve
     ax = axes[2]
@@ -286,6 +464,7 @@ def plot_curves_panel(results_list, output_path):
     ax.set_title('Calibration Curve', fontweight='bold')
     ax.set_xlabel('Mean Predicted Probability')
     ax.set_ylabel('Fraction of Positives')
+    style_axes(ax)
     
     # 4. Metrics Table
     ax = axes[3]
@@ -359,21 +538,48 @@ def main():
     X_scaled = scaler.fit_transform(X)
     feature_names = ['EAN Conc.', 'Protein Conc.']
     
-    # --- REGRESSION (Rg) ---
-    print("Evaluating Regression (Rg)...")
-    y_reg = df['y1'].values
-    reg_models = get_regression_models()
-    reg_results = []
-    
-    for name, model in reg_models.items():
-        try:
-            mean, std = evaluate_regression(model, X_scaled, y_reg)
-            reg_results.append({'Model': name, 'R2_Mean': mean, 'R2_Std': std})
-        except Exception as e:
-            print(f"Skipping {name}: {e}")
-    
-    pd.DataFrame(reg_results).to_csv(os.path.join(output_dir, 'rg_metrics.csv'), index=False)
-    plot_regression_bar(pd.DataFrame(reg_results), os.path.join(output_dir, 'Rg_Performance_Bar.png'))
+    # --- REGRESSION (Figure 7a) ---
+    # Prefer using precomputed summary (model_performance_summary.csv) to reproduce
+    # existing manuscript numbers exactly (do not change evaluation logic).
+    rg_summary_df, ci_summary_df = load_regression_summary(output_dir)
+    if rg_summary_df is not None and ci_summary_df is not None:
+        print("Using precomputed regression summary for Figure 7(a).")
+        plot_regression_panel(
+            rg_summary_df,
+            ci_summary_df,
+            os.path.join(output_dir, 'model_comparison_bar.png')
+        )
+    else:
+        # Fallback: compute metrics (used only if summary is missing)
+        print("Evaluating Regression (Rg)...")
+        y_reg = df['y1'].values
+        reg_models = get_regression_models()
+        reg_results = []
+        for name, model in reg_models.items():
+            try:
+                mean, std = evaluate_regression(model, X_scaled, y_reg)
+                reg_results.append({'Model': name, 'R2_Mean': mean, 'R2_Std': std})
+            except Exception as e:
+                print(f"Skipping {name}: {e}")
+        pd.DataFrame(reg_results).to_csv(os.path.join(output_dir, 'rg_metrics.csv'), index=False)
+        plot_regression_bar(pd.DataFrame(reg_results), os.path.join(output_dir, 'Rg_Performance_Bar.png'))
+
+        print("Evaluating Regression (CI)...")
+        y_ci_reg = df['CI'].values
+        ci_reg_results = []
+        for name, model in reg_models.items():
+            try:
+                mean, std = evaluate_regression(model, X_scaled, y_ci_reg)
+                ci_reg_results.append({'Model': name, 'R2_Mean': mean, 'R2_Std': std})
+            except Exception as e:
+                print(f"Skipping {name}: {e}")
+        pd.DataFrame(ci_reg_results).to_csv(os.path.join(output_dir, 'ci_reg_metrics.csv'), index=False)
+
+        plot_regression_panel(
+            pd.DataFrame(reg_results),
+            pd.DataFrame(ci_reg_results),
+            os.path.join(output_dir, 'model_comparison_bar.png')
+        )
     
     # --- CLASSIFICATION (CI) ---
     print("Evaluating Classification (CI > 0.1)...")
