@@ -1,0 +1,52 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "autosaxs-diag"
+version = "0.1.0"
+description = "Automated SAXS diagnostics: physics-based feature extraction and ML prediction of protein crystallization in EAN ionic-liquid buffers."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { file = "LICENSE" }
+authors = [
+    { name = "Yang Zhou", email = "zhouy0628@gmail.com" },
+]
+maintainers = [
+    { name = "Yang Zhou", email = "zhouy0628@gmail.com" },
+]
+keywords = ["SAXS", "protein crystallization", "ionic liquid", "machine learning", "Guinier", "crystallinity index"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Scientific/Engineering :: Chemistry",
+    "Topic :: Scientific/Engineering :: Physics",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "numpy>=1.22",
+    "scipy>=1.10",
+    "pandas>=1.5",
+    "scikit-learn>=1.2",
+    "xgboost>=1.7",
+    "matplotlib>=3.6",
+    "seaborn>=0.12",
+    "shap>=0.42",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7",
+    "ruff>=0.1",
+]
+
+[project.urls]
+Repository = "https://github.com/yrlf/autosaxs-diag"
+
+[tool.setuptools]
+packages = ["src"]

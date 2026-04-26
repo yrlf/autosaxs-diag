@@ -1,49 +1,52 @@
-# Python
+# Byte-compiled / cache
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
-.Python
+
+# Distribution / packaging
 build/
-develop-eggs/
 dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
 *.egg-info/
-.installed.cfg
 *.egg
+.eggs/
+pip-wheel-metadata/
 
-# Virtual Environment
-venv/
-ENV/
-env/
+# Virtual environments
 .venv/
+venv/
+env/
+.envrc
 
-# IDE
+# Editors / IDEs
 .idea/
 .vscode/
 *.swp
-*.swo
 *~
-
-# Jupyter Notebook
-.ipynb_checkpoints/
 
 # OS
 .DS_Store
 Thumbs.db
+*:Zone.Identifier
 
-# Project specific
+# Claude Code session data
+.claude/
+
+# Type & test caches
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# matplotlib font cache
+.mplconfig/
+
+# Project artefacts (generated)
+outputs/
 *.log
 *.tmp
-
-# Large data files (optional - uncomment if needed)
-# *.csv
-# *.xlsx

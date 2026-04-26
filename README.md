@@ -1,127 +1,120 @@
-# Protein Crystallization ML Analysis
+# autosaxs-diag
 
-A machine learning project to predict protein crystallization behavior using EAN (Ethylammonium Nitrate) ionic liquid concentration and protein concentration as features.
+Automated diagnostics for protein samples in **ethylammonium nitrate (EAN)** ionic-liquid buffers
+from Small-Angle X-ray Scattering (SAXS) curves. The pipeline pairs a lightweight
+physics extractor with a comparative ML benchmark over experimental controls
+(EAN concentration, protein concentration).
 
-## 📊 Project Overview
+## What the project does
 
-This project uses various machine learning models to:
-1. **Regression Task (Y1)**: Predict Rg (Radius of Gyration) values
-2. **Classification Task (Y2)**: Predict crystalline formation (0/1)
+1. **Physics extraction** (`skill/saxs_physics/`) — pure-Python Guinier fit (Rg, I(0)),
+   Bragg-peak detection, and Crystallinity Index (CI) from raw `.dat` files.
+2. **ML benchmark** (`scripts/evaluate.py`) — eight regressors and eight classifiers
+   trained on `(x1, x2) = (EAN wt%, protein mg/mL)` to predict
+   - **Rg** (continuous, Å),
+   - **CI** (continuous),
+   - **crystalline / amorphous** (binary, CI > 0.1).
 
-## 🔬 Dataset
+   Reports R², RMSE, AUC, F1, Youden, Brier, calibration slope, plus ROC,
+   calibration, decision-curve, feature-importance, and SHAP plots.
+3. **Publication plots** (`scripts/generate_publication_plots.py`,
+   `scripts/generate_heatmap.py`, `scripts/generate_heatmap_ci.py`) —
+   journal-ready figures including 2-D prediction heatmaps over the
+   `(x1, x2)` space.
 
-- **Samples**: 99
-- **Features**:
-  - X1: EAN Concentration (wt%)
-  - X2: Protein Concentration (mg/mL)
-- **Targets**:
-  - Y1: Rg (Radius of Gyration) - Continuous
-  - Y2: Crystalline Present (0/1) - Binary
+## Dataset
 
-## 🤖 Models Evaluated
+99 samples spanning 11 EAN concentrations × 9 protein concentrations,
+extracted from the raw curves under `raw_saxs_data/` and consolidated in
+`data/cleaned_data.csv` (also `data/ML_targets_crystal_oligo v3.csv`,
+the source spreadsheet exported as CSV).
 
-### Regression Models (12)
-- Linear Regression, Ridge, Lasso, ElasticNet
-- SVR (RBF, Linear)
-- Decision Tree, Random Forest, Gradient Boosting
-- XGBoost, KNN
+| Column | Meaning |
+| ------ | ------- |
+| `x1`   | EAN concentration (wt%) |
+| `x2`   | Protein concentration (mg/mL) |
+| `y1`   | Rg (Å, Guinier fit) |
+| `y2`   | Crystalline present (0/1) |
+| `CI`   | Crystallinity Index |
+| `R2_w` | Weighted R² of Guinier fit (quality flag) |
 
-### Classification Models (9)
-- Logistic Regression
-- SVC (RBF, Linear)
-- Decision Tree, Random Forest, Gradient Boosting
-- XGBoost, KNN
+## Installation
 
-## 📈 Best Results
-
-### Regression (Target: Y1 - Rg)
-| Model | CV R² | CV Std |
-|-------|-------|--------|
-| **XGBoost** | **0.796** | ±0.052 |
-| Random Forest | 0.778 | ±0.054 |
-| Gradient Boosting | 0.771 | ±0.102 |
-
-### Classification (Target: Y2 - Crystalline)
-| Model | CV Accuracy | AUC | F1 Score | Youden Index |
-|-------|-------------|-----|----------|--------------|
-| **Gradient Boosting** | **91.9%** | 0.942 | 0.919 | 0.809 |
-| Random Forest | 90.9% | **0.957** | 0.909 | 0.775 |
-
-## 📁 Project Structure
-
-```
-HQ/
-├── src/
-│   ├── data_cleaning.py      # Data preprocessing
-│   ├── modeling.py           # ML models (extended)
-│   └── visualization.py      # Heatmap visualization
-├── run_analysis.py           # Basic analysis script
-├── run_extended_analysis.py  # Extended model comparison
-├── run_advanced_analysis.py  # Advanced analysis with SHAP
-├── generate_heatmap.py       # Heatmap generation
-├── generate_analysis_charts.py
-├── cleaned_data.csv          # Preprocessed data
-├── results_summary.txt       # Basic results
-├── extended_results_summary.txt
-├── advanced_analysis_report.txt
-└── *.png                     # Visualization outputs
-```
-
-## 🚀 Quick Start
-
-### Requirements
 ```bash
-pip install pandas numpy scikit-learn xgboost matplotlib shap
+pip install -e .
 ```
 
-### Run Analysis
+Targets **Python ≥ 3.9**. Optional ATSAS tools (`autorg`, `oligomer`) are required
+only if you re-run the oligomer fits inside `skill/saxs_physics/`.
+
+## Usage
+
+Run the canonical multi-model evaluation:
+
 ```bash
-# Basic analysis
-python run_analysis.py
-
-# Extended model comparison (12 regression, 9 classification models)
-python run_extended_analysis.py
-
-# Advanced analysis with 10-fold CV, hyperparameter tuning, and SHAP
-python run_advanced_analysis.py
-
-# Generate heatmap visualization
-python generate_heatmap.py
+python scripts/evaluate.py
 ```
 
-## 📊 Visualizations
+This loads `data/ML_targets_crystal_oligo v3.csv`, applies the cleaning pipeline
+in `src/data_cleaning.py` (R² ≥ 0.80 quality filter, CI = 0 when
+`y2 = FALSE`), trains all models on an 80/20 split and writes metrics + plots
+under `outputs/evaluation/{Rg_regression, CI_regression, CI_classification}/`.
 
-### Rg Prediction Heatmap
-![Heatmap](heatmap_y1_rg.png)
+Generate publication figures:
 
-### Model Performance Comparison
-![Dashboard](extended_dashboard.png)
+```bash
+python scripts/generate_publication_plots.py
+python scripts/generate_heatmap.py        # Rg(x1, x2) heatmap
+python scripts/generate_heatmap_ci.py     # CI(x1, x2) heatmap
+```
 
-### ROC Curves
-![ROC](advanced_roc_curves.png)
+Re-extract physics features from raw curves:
 
-### SHAP Feature Importance
-![SHAP](shap_feature_importance.png)
+```bash
+python skill/saxs_physics/scripts/analyze_batch.py raw_saxs_data --out features.csv
+```
 
-## 🔍 Key Findings
+## Layout
 
-1. **XGBoost** performs best for Rg prediction (R² = 0.796)
-2. **Gradient Boosting** achieves highest accuracy for crystalline classification (91.9%)
-3. **X1 (EAN Concentration)** is the dominant feature (SHAP importance 3.3x higher than X2)
-4. Higher EAN concentration increases crystallization probability
+```
+.
+├── src/                              # Cleaning + modelling library
+│   ├── data_cleaning.py              # DataCleaner (column rename, R² filter, CI logic)
+│   ├── modeling.py                   # Model zoo wrappers
+│   └── visualization.py              # Heatmap pipeline + colormaps
+├── scripts/
+│   ├── evaluate.py                   # canonical: train + eval all models
+│   ├── generate_publication_plots.py # journal-style ROC / DCA / SHAP
+│   ├── generate_heatmap.py           # Rg heatmap
+│   ├── generate_heatmap_ci.py        # CI heatmap
+│   ├── generate_analysis_charts.py   # dashboard / radar plots
+│   ├── run_augmentation_test.py      # noise-augmentation experiment
+│   └── run_feature_engineering.py    # polynomial / engineered features
+├── skill/saxs_physics/               # physics extractor (Guinier, CI, oligomer)
+├── data/
+│   ├── cleaned_data.csv              # consolidated training table (n=99)
+│   └── ML_targets_crystal_oligo v3.csv  # raw spreadsheet export
+├── raw_saxs_data/                    # 100+ .dat curves (EAN/protein grid + buffer)
+├── manuscript.md                     # paper draft
+├── hyperparameter_tuning_description.md
+├── pyproject.toml
+├── LICENSE
+└── README.md
+```
 
-## 📚 Evaluation Metrics
+## Headline results
 
-- **Brier Score**: Probability prediction accuracy (lower is better)
-- **Youden Index**: Sensitivity + Specificity - 1
-- **Calibration Slope**: Prediction confidence calibration
-- **AUC**: Area Under ROC Curve
-- **F1 Score**: Harmonic mean of precision and recall
+Best models per task on the held-out 20% test set (see `evaluate.py` output):
 
-## 📝 License
+| Task                    | Best model              | Metric                       |
+| ----------------------- | ----------------------- | ---------------------------- |
+| Rg regression           | XGBoost / Random Forest | R² ≈ 0.78 – 0.80             |
+| CI regression           | Gradient Boosting       | R² ≈ 0.7                     |
+| Crystallinity (CI>0.1)  | Gradient Boosting / RF  | AUC ≈ 0.94, Youden ≈ 0.81    |
 
-MIT License
+`x1` (EAN concentration) dominates feature importance — SHAP magnitudes are
+roughly 3× larger than `x2` for every tree-based model.
 
-## 👤 Author
+## License
 
-Generated with ML analysis pipeline
+Released under the MIT License (see `LICENSE`).
